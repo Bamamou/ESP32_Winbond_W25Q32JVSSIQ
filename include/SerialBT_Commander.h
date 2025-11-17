@@ -30,6 +30,11 @@ extern bool flashRingBufferIsPaused();
 // Ring buffer state
 extern bool ringBufferInitialized;
 
+// Auto-write functions
+extern void startAutoWrite();
+extern void stopAutoWrite();
+extern bool isAutoWriteEnabled();
+
 // Forward declarations
 extern SPIFlash flash;
 extern SemaphoreHandle_t spiMutex;
@@ -158,6 +163,16 @@ private:
      * @brief Handle ring buffer reset command
      */
     void handleRingResetCommand();
+    
+    /**
+     * @brief Handle auto-write start command
+     */
+    void handleAutoStartCommand();
+    
+    /**
+     * @brief Handle auto-write stop command
+     */
+    void handleAutoStopCommand();
     
     /**
      * @brief Handle info command

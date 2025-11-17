@@ -53,6 +53,7 @@ void SerialBT_Commander::printMenu() {
     println("  readb <addr> <len>     - Read bytes (e.g., readb 1000 16)");
     println("  readrange <start> <end> - Read address range (hex)");
     println("  readall                - Dump entire flash (4MB!)");
+    println("  stop                   - Stop readall operation");
     println("");
     println("Erase Commands:");
     println("  erase <addr>           - Erase sector at address (hex)");
@@ -66,6 +67,10 @@ void SerialBT_Commander::printMenu() {
     println("  ringstatus             - Show ring buffer position");
     println("  ringsetpos <addr>      - Set ring buffer position");
     println("  ringreset              - Reset ring buffer to 0x00000000");
+    println("");
+    println("Auto-Write Commands:");
+    println("  autostart              - Start auto-writing random numbers");
+    println("  autostop               - Stop auto-writing");
     println("");
     println("Info Commands:");
     println("  info                   - Show flash chip information");
@@ -336,6 +341,12 @@ void SerialBT_Commander::processCommand(String cmd) {
     else if (command == "ringreset") {
         handleRingResetCommand();
     }
+    else if (command == "autostart") {
+        handleAutoStartCommand();
+    }
+    else if (command == "autostop") {
+        handleAutoStopCommand();
+    }
     else {
         printf("[ERROR] Unknown command: %s\n", command.c_str());
         println("[INFO] Type 'help' for available commands");
@@ -345,6 +356,7 @@ void SerialBT_Commander::processCommand(String cmd) {
 void SerialBT_Commander::handleReadAllCommand() {
     println("[BT] Starting full flash dump (4MB)...");
     println("[BT] This will take several minutes...");
+    println("[BT] Send 'stop' command to abort");
     println("[BT] Ring buffer writes paused during read\n");
     
     // Pause ring buffer writes during read
@@ -354,6 +366,7 @@ void SerialBT_Commander::handleReadAllCommand() {
     uint8_t buffer[256];
     uint32_t totalBytes = 0;
     const uint32_t FLASH_SIZE = 4194304;
+    bool stopped = false;
     
     println("\n========== FLASH MEMORY DUMP START ==========");
     printf("Total Size: %u bytes (4.00 MB)\n", FLASH_SIZE);
@@ -361,6 +374,18 @@ void SerialBT_Commander::handleReadAllCommand() {
     println("=============================================\n");
     
     for (uint32_t addr = 0; addr < FLASH_SIZE; addr += 256) {
+        // Check for stop command
+        if (SerialBT.available()) {
+            String cmd = SerialBT.readStringUntil('\n');
+            cmd.trim();
+            cmd.toLowerCase();
+            if (cmd == "stop") {
+                stopped = true;
+                println("\n[BT] ✓ Read operation stopped by user");
+                break;
+            }
+        }
+        
         if (!flashRead(addr, buffer, 256)) {
             printf("[ERROR] Failed to read at 0x%08X\n", addr);
             break;
@@ -385,8 +410,10 @@ void SerialBT_Commander::handleReadAllCommand() {
         delay(10); // Prevent watchdog and allow BT buffer to flush
     }
     
-    println("\n\n========== FLASH MEMORY DUMP COMPLETE ==========");
-    printf("Total bytes read: %u (4.00 MB)\n", totalBytes);
+    if (!stopped) {
+        println("\n\n========== FLASH MEMORY DUMP COMPLETE ==========");
+    }
+    printf("Total bytes read: %u (%.2f MB)\n", totalBytes, totalBytes / 1048576.0);
     println("================================================\n");
     
     // Resume ring buffer writes
@@ -466,11 +493,13 @@ void SerialBT_Commander::handleRingStatusCommand() {
         uint32_t pos = flashRingBufferGetPosition();
         uint32_t sector = pos / FLASH_SECTOR_SIZE;
         bool paused = flashRingBufferIsPaused();
+        bool autoWrite = isAutoWriteEnabled();
         
         printf("  Initialized: YES\n");
         printf("  Current position: 0x%08X\n", pos);
         printf("  Current sector: %u\n", sector);
         printf("  Status: %s\n", paused ? "PAUSED" : "ACTIVE");
+        printf("  Auto-write: %s\n", autoWrite ? "ENABLED" : "DISABLED");
     }
     
     printf("  Flash capacity: 0x%08X (4.00 MB)\n", 4194304);
@@ -498,6 +527,32 @@ void SerialBT_Commander::handleRingSetPosCommand(String args) {
 void SerialBT_Commander::handleRingResetCommand() {
     flashRingBufferReset();
     println("[BT] ✓ Ring buffer reset to 0x00000000");
+}
+
+void SerialBT_Commander::handleAutoStartCommand() {
+    if (!ringBufferInitialized) {
+        println("[BT] ✗ Ring buffer not initialized!");
+        println("[BT] Run 'ringinit' first");
+        return;
+    }
+    
+    if (isAutoWriteEnabled()) {
+        println("[BT] Auto-write is already running");
+    } else {
+        startAutoWrite();
+        println("[BT] ✓ Auto-write started");
+        println("[BT] Writing random numbers (0-1000) every second");
+        println("[BT] Use 'autostop' to stop");
+    }
+}
+
+void SerialBT_Commander::handleAutoStopCommand() {
+    if (isAutoWriteEnabled()) {
+        stopAutoWrite();
+        println("[BT] ✓ Auto-write stopped");
+    } else {
+        println("[BT] Auto-write is not running");
+    }
 }
 
 void SerialBT_Commander::processCommands() {

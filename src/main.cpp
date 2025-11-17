@@ -21,12 +21,16 @@ TaskHandle_t readTaskHandle = NULL;
 TaskHandle_t eraseTaskHandle = NULL;
 TaskHandle_t monitorTaskHandle = NULL;
 TaskHandle_t bluetoothTaskHandle = NULL;
+TaskHandle_t autoWriteTaskHandle = NULL;
 
 // Semaphore for SPI access
 SemaphoreHandle_t spiMutex;
 
 // Flash initialization status
 bool flashInitialized = false;
+
+// Auto-write control
+bool autoWriteEnabled = false;
 
 // Bluetooth Commander instance
 SerialBT_Commander* btCommander = nullptr;
@@ -551,6 +555,106 @@ void flashRingBufferResume() {
  */
 bool flashRingBufferIsPaused() {
   return ringBufferPaused;
+}
+
+//=============================================================================
+// AUTO-WRITE TASK
+//=============================================================================
+
+/**
+ * @brief Task that automatically writes random numbers to ring buffer
+ * Writes one random number (0-1000) every second
+ * Automatically handles ring buffer wrapping
+ */
+void autoWriteTask(void* parameter) {
+  Serial.println("[AUTO] Auto-write task started");
+  Serial.println("[AUTO] Waiting for ring buffer initialization...");
+  
+  // Wait for ring buffer to be initialized
+  while (!ringBufferInitialized) {
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+  
+  Serial.println("[AUTO] Ring buffer initialized, starting auto-write");
+  uint32_t writeCount = 0;
+  
+  while (true) {
+    if (autoWriteEnabled && !ringBufferPaused) {
+      // Generate random number between 0 and 1000
+      uint16_t randomNum = random(0, 1001);
+      
+      // Create data packet: timestamp (4 bytes) + random number (2 bytes)
+      uint8_t data[6];
+      uint32_t timestamp = millis();
+      
+      // Pack timestamp (little-endian)
+      data[0] = (timestamp >> 0) & 0xFF;
+      data[1] = (timestamp >> 8) & 0xFF;
+      data[2] = (timestamp >> 16) & 0xFF;
+      data[3] = (timestamp >> 24) & 0xFF;
+      
+      // Pack random number (little-endian)
+      data[4] = (randomNum >> 0) & 0xFF;
+      data[5] = (randomNum >> 8) & 0xFF;
+      
+      // Write to ring buffer
+      if (flashRingBufferWrite(data, 6)) {
+        writeCount++;
+        Serial.printf("[AUTO] #%u: Wrote %u at 0x%08X (time: %u ms)\n", 
+                      writeCount, randomNum, 
+                      flashRingBufferGetPosition() - 6, timestamp);
+      } else {
+        Serial.println("[AUTO] Write failed!");
+      }
+    }
+    
+    // Wait 1 second before next write
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+
+/**
+ * @brief Start automatic writing to ring buffer
+ */
+void startAutoWrite() {
+  if (!autoWriteEnabled) {
+    autoWriteEnabled = true;
+    Serial.println("[AUTO] Auto-write ENABLED");
+    
+    // Create auto-write task if it doesn't exist
+    if (autoWriteTaskHandle == NULL) {
+      xTaskCreatePinnedToCore(
+        autoWriteTask,
+        "AutoWrite",
+        4096,
+        NULL,
+        1,
+        &autoWriteTaskHandle,
+        1  // Run on core 1
+      );
+    }
+  } else {
+    Serial.println("[AUTO] Auto-write already enabled");
+  }
+}
+
+/**
+ * @brief Stop automatic writing to ring buffer
+ */
+void stopAutoWrite() {
+  if (autoWriteEnabled) {
+    autoWriteEnabled = false;
+    Serial.println("[AUTO] Auto-write DISABLED");
+  } else {
+    Serial.println("[AUTO] Auto-write already disabled");
+  }
+}
+
+/**
+ * @brief Check if auto-write is enabled
+ */
+bool isAutoWriteEnabled() {
+  return autoWriteEnabled;
 }
 
 //=============================================================================
