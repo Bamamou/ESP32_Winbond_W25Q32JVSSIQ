@@ -328,6 +328,232 @@ bool flashEraseRange(uint32_t startAddress, uint32_t endAddress) {
 }
 
 //=============================================================================
+// RING BUFFER MANAGEMENT
+//=============================================================================
+
+// Ring buffer state
+uint32_t ringBufferWriteAddress = 0;  // Current write position
+bool ringBufferInitialized = false;
+bool ringBufferPaused = false;  // Flag to pause ring buffer writes
+
+/**
+ * @brief Initialize ring buffer by finding the first empty sector
+ * Scans flash to find where to start writing
+ * @return true if successful, false otherwise
+ */
+bool flashRingBufferInit() {
+  if (!flashInitialized) {
+    Serial.println("[ERROR] Flash not initialized!");
+    return false;
+  }
+  
+  Serial.println("[RING] Initializing ring buffer...");
+  Serial.println("[RING] Scanning for first empty sector...");
+  
+  // Scan flash to find first non-empty (0xFF) sector
+  uint8_t buffer[256];
+  bool foundData = false;
+  uint32_t lastDataSector = 0;
+  
+  for (uint32_t sector = 0; sector < (FLASH_TOTAL_SIZE / FLASH_SECTOR_SIZE); sector++) {
+    uint32_t addr = sector * FLASH_SECTOR_SIZE;
+    
+    // Read first 256 bytes of sector
+    if (!flashRead(addr, buffer, 256)) {
+      Serial.printf("[ERROR] Failed to read sector %u\n", sector);
+      return false;
+    }
+    
+    // Check if sector contains data (not all 0xFF)
+    bool isEmpty = true;
+    for (int i = 0; i < 256; i++) {
+      if (buffer[i] != 0xFF) {
+        isEmpty = false;
+        foundData = true;
+        lastDataSector = sector;
+        break;
+      }
+    }
+    
+    // If we found data before and now found empty sector, start here
+    if (foundData && isEmpty) {
+      ringBufferWriteAddress = addr;
+      ringBufferInitialized = true;
+      Serial.printf("[RING] Write position set to sector %u (address 0x%08X)\n", 
+                    sector, ringBufferWriteAddress);
+      return true;
+    }
+    
+    // Progress indicator
+    if (sector % 100 == 0) {
+      Serial.printf("[RING] Scanned %u/%u sectors...\n", 
+                    sector, FLASH_TOTAL_SIZE / FLASH_SECTOR_SIZE);
+    }
+  }
+  
+  // If no empty sector found, start after last data sector
+  if (foundData) {
+    ringBufferWriteAddress = ((lastDataSector + 1) % (FLASH_TOTAL_SIZE / FLASH_SECTOR_SIZE)) * FLASH_SECTOR_SIZE;
+  } else {
+    // Flash is empty, start at beginning
+    ringBufferWriteAddress = 0;
+  }
+  
+  ringBufferInitialized = true;
+  Serial.printf("[RING] Write position set to address 0x%08X\n", ringBufferWriteAddress);
+  return true;
+}
+
+/**
+ * @brief Write data in ring buffer mode
+ * Automatically wraps around to beginning and erases next sector before writing
+ * @param data Pointer to data to write
+ * @param length Length of data
+ * @return true if successful, false otherwise
+ */
+bool flashRingBufferWrite(const uint8_t* data, size_t length) {
+  if (!flashInitialized || !ringBufferInitialized) {
+    Serial.println("[ERROR] Ring buffer not initialized! Call flashRingBufferInit() first");
+    return false;
+  }
+  
+  if (ringBufferPaused) {
+    Serial.println("[WARNING] Ring buffer is paused (read operation in progress)");
+    return false;
+  }
+  
+  if (data == NULL || length == 0) {
+    return false;
+  }
+  
+  Serial.printf("[RING] Writing %u bytes at 0x%08X\n", length, ringBufferWriteAddress);
+  
+  size_t bytesWritten = 0;
+  
+  while (bytesWritten < length) {
+    // Calculate current sector
+    uint32_t currentSector = ringBufferWriteAddress / FLASH_SECTOR_SIZE;
+    uint32_t sectorOffset = ringBufferWriteAddress % FLASH_SECTOR_SIZE;
+    
+    // If at sector boundary, erase the sector first
+    if (sectorOffset == 0) {
+      Serial.printf("[RING] Erasing sector %u at 0x%08X\n", 
+                    currentSector, ringBufferWriteAddress);
+      if (!flashEraseSector(ringBufferWriteAddress)) {
+        Serial.println("[ERROR] Failed to erase sector");
+        return false;
+      }
+    }
+    
+    // Calculate how much we can write in current sector
+    size_t remainingInSector = FLASH_SECTOR_SIZE - sectorOffset;
+    size_t toWrite = (length - bytesWritten) < remainingInSector ? 
+                     (length - bytesWritten) : remainingInSector;
+    
+    // Write data
+    if (!flashWrite(ringBufferWriteAddress, &data[bytesWritten], toWrite)) {
+      Serial.println("[ERROR] Failed to write data");
+      return false;
+    }
+    
+    bytesWritten += toWrite;
+    ringBufferWriteAddress += toWrite;
+    
+    // Wrap around if we reach end of flash
+    if (ringBufferWriteAddress >= FLASH_TOTAL_SIZE) {
+      Serial.println("[RING] Wrapping around to beginning of flash");
+      ringBufferWriteAddress = 0;
+    }
+  }
+  
+  Serial.printf("[RING] Write complete. Next write address: 0x%08X\n", ringBufferWriteAddress);
+  return true;
+}
+
+/**
+ * @brief Write string in ring buffer mode
+ * @param str String to write
+ * @return true if successful, false otherwise
+ */
+bool flashRingBufferWriteString(const String& str) {
+  // Add null terminator
+  size_t len = str.length() + 1;
+  uint8_t* buffer = (uint8_t*)malloc(len);
+  if (buffer == NULL) {
+    Serial.println("[ERROR] Failed to allocate memory");
+    return false;
+  }
+  
+  str.getBytes(buffer, len);
+  bool result = flashRingBufferWrite(buffer, len);
+  free(buffer);
+  
+  return result;
+}
+
+/**
+ * @brief Get current ring buffer write position
+ * @return Current write address
+ */
+uint32_t flashRingBufferGetPosition() {
+  return ringBufferWriteAddress;
+}
+
+/**
+ * @brief Set ring buffer write position manually
+ * @param address New write address
+ * @return true if successful, false otherwise
+ */
+bool flashRingBufferSetPosition(uint32_t address) {
+  if (address >= FLASH_TOTAL_SIZE) {
+    Serial.println("[ERROR] Address out of bounds");
+    return false;
+  }
+  
+  // Align to sector boundary
+  address = (address / FLASH_SECTOR_SIZE) * FLASH_SECTOR_SIZE;
+  
+  ringBufferWriteAddress = address;
+  ringBufferInitialized = true;
+  
+  Serial.printf("[RING] Write position set to 0x%08X\n", ringBufferWriteAddress);
+  return true;
+}
+
+/**
+ * @brief Reset ring buffer to start of flash
+ */
+void flashRingBufferReset() {
+  ringBufferWriteAddress = 0;
+  ringBufferInitialized = true;
+  Serial.println("[RING] Ring buffer reset to address 0x00000000");
+}
+
+/**
+ * @brief Pause ring buffer writes (e.g., during read operations)
+ */
+void flashRingBufferPause() {
+  ringBufferPaused = true;
+  Serial.println("[RING] Ring buffer writes paused");
+}
+
+/**
+ * @brief Resume ring buffer writes
+ */
+void flashRingBufferResume() {
+  ringBufferPaused = false;
+  Serial.println("[RING] Ring buffer writes resumed");
+}
+
+/**
+ * @brief Check if ring buffer is paused
+ * @return true if paused, false otherwise
+ */
+bool flashRingBufferIsPaused() {
+  return ringBufferPaused;
+}
+
+//=============================================================================
 // FREERTOS TASK FUNCTIONS
 //=============================================================================
 

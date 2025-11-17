@@ -59,6 +59,14 @@ void SerialBT_Commander::printMenu() {
     println("  eraserange <start> <end> - Erase address range (hex)");
     println("  eraseall               - Erase entire chip (CAUTION!)");
     println("");
+    println("Ring Buffer Commands:");
+    println("  ringinit               - Initialize ring buffer (scan for write pos)");
+    println("  ringwrite <data>       - Write string to ring buffer");
+    println("  ringwriteb <b1,b2,...> - Write bytes to ring buffer");
+    println("  ringstatus             - Show ring buffer position");
+    println("  ringsetpos <addr>      - Set ring buffer position");
+    println("  ringreset              - Reset ring buffer to 0x00000000");
+    println("");
     println("Info Commands:");
     println("  info                   - Show flash chip information");
     println("  help                   - Show this menu");
@@ -127,11 +135,13 @@ void SerialBT_Commander::handleReadCommand(String args) {
         
         printf("[BT] Reading string from 0x%08X\n", addr);
         
+        flashRingBufferPause();
         if (flashReadString(addr, data)) {
             printf("[BT] Result: %s\n", data.c_str());
         } else {
             println("[BT] ✗ Read failed");
         }
+        flashRingBufferResume();
     } else {
         println("[ERROR] Usage: read <addr>");
     }
@@ -149,6 +159,7 @@ void SerialBT_Commander::handleReadBytesCommand(String args) {
             uint8_t buffer[256];
             printf("[BT] Reading %u bytes from 0x%08X\n", len, addr);
             
+            flashRingBufferPause();
             if (flashRead(addr, buffer, len)) {
                 print("[BT] Result: ");
                 for (uint32_t i = 0; i < len; i++) {
@@ -159,6 +170,7 @@ void SerialBT_Commander::handleReadBytesCommand(String args) {
             } else {
                 println("[BT] ✗ Read failed");
             }
+            flashRingBufferResume();
         } else {
             println("[ERROR] Length must be 1-256");
         }
@@ -179,6 +191,7 @@ void SerialBT_Commander::handleReadRangeCommand(String args) {
         if (len <= 256) {
             uint8_t buffer[256];
             
+            flashRingBufferPause();
             if (flashReadRange(startAddr, endAddr, buffer)) {
                 printf("[BT] Read %u bytes:\n", len);
                 for (uint32_t i = 0; i < len; i++) {
@@ -187,6 +200,7 @@ void SerialBT_Commander::handleReadRangeCommand(String args) {
                 }
                 println("");
             }
+            flashRingBufferResume();
         } else {
             println("[ERROR] Range too large (max 256 bytes)");
         }
@@ -304,6 +318,24 @@ void SerialBT_Commander::processCommand(String cmd) {
     else if (command == "eraseall") {
         handleEraseAllCommand();
     }
+    else if (command == "ringinit") {
+        handleRingInitCommand();
+    }
+    else if (command == "ringwrite") {
+        handleRingWriteCommand(args);
+    }
+    else if (command == "ringwriteb") {
+        handleRingWriteBytesCommand(args);
+    }
+    else if (command == "ringstatus") {
+        handleRingStatusCommand();
+    }
+    else if (command == "ringsetpos") {
+        handleRingSetPosCommand(args);
+    }
+    else if (command == "ringreset") {
+        handleRingResetCommand();
+    }
     else {
         printf("[ERROR] Unknown command: %s\n", command.c_str());
         println("[INFO] Type 'help' for available commands");
@@ -312,7 +344,11 @@ void SerialBT_Commander::processCommand(String cmd) {
 
 void SerialBT_Commander::handleReadAllCommand() {
     println("[BT] Starting full flash dump (4MB)...");
-    println("[BT] This will take several minutes...\n");
+    println("[BT] This will take several minutes...");
+    println("[BT] Ring buffer writes paused during read\n");
+    
+    // Pause ring buffer writes during read
+    flashRingBufferPause();
     
     // Redirect output through Bluetooth
     uint8_t buffer[256];
@@ -352,6 +388,116 @@ void SerialBT_Commander::handleReadAllCommand() {
     println("\n\n========== FLASH MEMORY DUMP COMPLETE ==========");
     printf("Total bytes read: %u (4.00 MB)\n", totalBytes);
     println("================================================\n");
+    
+    // Resume ring buffer writes
+    flashRingBufferResume();
+}
+
+void SerialBT_Commander::handleRingInitCommand() {
+    println("[BT] Initializing ring buffer...");
+    println("[BT] This may take a few minutes...");
+    
+    if (flashRingBufferInit()) {
+        uint32_t pos = flashRingBufferGetPosition();
+        println("[BT] ✓ Ring buffer initialized");
+        printf("[BT] Write position: 0x%08X\n", pos);
+    } else {
+        println("[BT] ✗ Ring buffer initialization failed");
+    }
+}
+
+void SerialBT_Commander::handleRingWriteCommand(String args) {
+    if (args.length() > 0) {
+        printf("[BT] Writing string to ring buffer: %s\n", args.c_str());
+        
+        if (flashRingBufferWriteString(args)) {
+            uint32_t pos = flashRingBufferGetPosition();
+            println("[BT] ✓ Write successful");
+            printf("[BT] Next write position: 0x%08X\n", pos);
+        } else {
+            println("[BT] ✗ Write failed");
+            println("[BT] Did you run 'ringinit' first?");
+        }
+    } else {
+        println("[ERROR] Usage: ringwrite <data>");
+    }
+}
+
+void SerialBT_Commander::handleRingWriteBytesCommand(String args) {
+    if (args.length() > 0) {
+        // Parse comma-separated bytes
+        uint8_t bytes[256];
+        int count = 0;
+        int lastIdx = 0;
+        
+        for (int i = 0; i <= args.length(); i++) {
+            if (i == args.length() || args.charAt(i) == ',') {
+                String byteStr = args.substring(lastIdx, i);
+                byteStr.trim();
+                bytes[count++] = byteStr.toInt();
+                lastIdx = i + 1;
+                if (count >= 256) break;
+            }
+        }
+        
+        printf("[BT] Writing %d bytes to ring buffer\n", count);
+        
+        if (flashRingBufferWrite(bytes, count)) {
+            uint32_t pos = flashRingBufferGetPosition();
+            println("[BT] ✓ Write successful");
+            printf("[BT] Next write position: 0x%08X\n", pos);
+        } else {
+            println("[BT] ✗ Write failed");
+            println("[BT] Did you run 'ringinit' first?");
+        }
+    } else {
+        println("[ERROR] Usage: ringwriteb <byte1,byte2,...>");
+    }
+}
+
+void SerialBT_Commander::handleRingStatusCommand() {
+    println("\n[RING] Ring Buffer Status:");
+    
+    if (!ringBufferInitialized) {
+        println("  Status: NOT INITIALIZED");
+        println("  Run 'ringinit' to initialize the ring buffer");
+        println("  Note: Ring buffer state is lost on reboot");
+    } else {
+        uint32_t pos = flashRingBufferGetPosition();
+        uint32_t sector = pos / FLASH_SECTOR_SIZE;
+        bool paused = flashRingBufferIsPaused();
+        
+        printf("  Initialized: YES\n");
+        printf("  Current position: 0x%08X\n", pos);
+        printf("  Current sector: %u\n", sector);
+        printf("  Status: %s\n", paused ? "PAUSED" : "ACTIVE");
+    }
+    
+    printf("  Flash capacity: 0x%08X (4.00 MB)\n", 4194304);
+    printf("  Sector size: 0x%08X (%u bytes)\n", FLASH_SECTOR_SIZE, FLASH_SECTOR_SIZE);
+}
+
+void SerialBT_Commander::handleRingSetPosCommand(String args) {
+    if (args.length() > 0) {
+        uint32_t addr = parseHex(args);
+        
+        printf("[BT] Setting ring buffer position to 0x%08X\n", addr);
+        
+        if (flashRingBufferSetPosition(addr)) {
+            println("[BT] ✓ Position set successfully");
+            uint32_t newPos = flashRingBufferGetPosition();
+            printf("[BT] Aligned position: 0x%08X\n", newPos);
+        } else {
+            println("[BT] ✗ Failed to set position");
+        }
+    } else {
+        println("[ERROR] Usage: ringsetpos <addr>");
+    }
+}
+
+void SerialBT_Commander::handleRingResetCommand() {
+    flashRingBufferReset();
+    println("[BT] ✓ Ring buffer reset to 0x00000000");
 }
 
 void SerialBT_Commander::processCommands() {

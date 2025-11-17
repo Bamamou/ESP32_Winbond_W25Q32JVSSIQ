@@ -16,6 +16,20 @@ extern bool flashEraseAll();
 extern bool flashEraseSector(uint32_t address);
 extern bool flashEraseRange(uint32_t startAddress, uint32_t endAddress);
 
+// Ring buffer functions
+extern bool flashRingBufferInit();
+extern bool flashRingBufferWrite(const uint8_t* data, size_t length);
+extern bool flashRingBufferWriteString(const String& str);
+extern uint32_t flashRingBufferGetPosition();
+extern bool flashRingBufferSetPosition(uint32_t address);
+extern void flashRingBufferReset();
+extern void flashRingBufferPause();
+extern void flashRingBufferResume();
+extern bool flashRingBufferIsPaused();
+
+// Ring buffer state
+extern bool ringBufferInitialized;
+
 // Forward declarations
 extern SPIFlash flash;
 extern SemaphoreHandle_t spiMutex;
@@ -114,6 +128,36 @@ private:
      * @brief Handle erase all command
      */
     void handleEraseAllCommand();
+    
+    /**
+     * @brief Handle ring buffer init command
+     */
+    void handleRingInitCommand();
+    
+    /**
+     * @brief Handle ring buffer write command
+     */
+    void handleRingWriteCommand(String args);
+    
+    /**
+     * @brief Handle ring buffer write bytes command
+     */
+    void handleRingWriteBytesCommand(String args);
+    
+    /**
+     * @brief Handle ring buffer status command
+     */
+    void handleRingStatusCommand();
+    
+    /**
+     * @brief Handle ring buffer set position command
+     */
+    void handleRingSetPosCommand(String args);
+    
+    /**
+     * @brief Handle ring buffer reset command
+     */
+    void handleRingResetCommand();
     
     /**
      * @brief Handle info command
