@@ -11,6 +11,7 @@ extern bool flashWriteString(uint32_t address, const String& str);
 extern bool flashRead(uint32_t address, uint8_t* buffer, size_t length);
 extern bool flashReadString(uint32_t address, String& str);
 extern bool flashReadRange(uint32_t startAddress, uint32_t endAddress, uint8_t* buffer);
+extern void flashDumpAll(size_t chunkSize);
 extern bool flashEraseAll();
 extern bool flashEraseSector(uint32_t address);
 extern bool flashEraseRange(uint32_t startAddress, uint32_t endAddress);
@@ -118,6 +119,11 @@ private:
      * @brief Handle info command
      */
     void handleInfoCommand();
+    
+    /**
+     * @brief Handle read all (dump) command
+     */
+    void handleReadAllCommand();
 };
 
 #endif // SERIALBT_COMMANDER_H

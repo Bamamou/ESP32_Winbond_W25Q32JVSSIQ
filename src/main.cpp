@@ -155,6 +155,64 @@ bool flashReadAll(uint8_t* buffer, bool printProgress = true) {
 }
 
 /**
+ * @brief Dump entire flash memory to Serial output in hex format
+ * This is practical for viewing/saving flash contents without needing 4MB RAM
+ * @param chunkSize Size of chunks to read at a time (default 256 bytes)
+ */
+void flashDumpAll(size_t chunkSize = 256) {
+  if (!flashInitialized) {
+    Serial.println("[ERROR] Flash not initialized!");
+    return;
+  }
+  
+  uint8_t* buffer = (uint8_t*)malloc(chunkSize);
+  if (buffer == NULL) {
+    Serial.println("[ERROR] Failed to allocate memory!");
+    return;
+  }
+  
+  Serial.println("\n========== FLASH MEMORY DUMP START ==========");
+  Serial.printf("Total Size: %u bytes (%.2f MB)\n", FLASH_TOTAL_SIZE, FLASH_TOTAL_SIZE / 1048576.0);
+  Serial.println("Format: [Address] Data (16 bytes per line)");
+  Serial.println("=============================================\n");
+  
+  uint32_t totalBytes = 0;
+  
+  for (uint32_t addr = 0; addr < FLASH_TOTAL_SIZE; addr += chunkSize) {
+    // Read chunk
+    if (!flashRead(addr, buffer, chunkSize)) {
+      Serial.printf("[ERROR] Failed to read at 0x%08X\n", addr);
+      break;
+    }
+    
+    // Print chunk in hex format (16 bytes per line)
+    for (size_t i = 0; i < chunkSize; i++) {
+      if ((addr + i) % 16 == 0) {
+        if (i > 0) Serial.println();
+        Serial.printf("[%08X] ", addr + i);
+      }
+      Serial.printf("%02X ", buffer[i]);
+      totalBytes++;
+    }
+    
+    // Progress update every 64KB
+    if ((addr % (64 * 1024)) == 0 && addr > 0) {
+      Serial.printf("\n[PROGRESS] %u%% - %u KB read\n", 
+                    (addr * 100) / FLASH_TOTAL_SIZE, addr / 1024);
+    }
+    
+    // Allow watchdog reset
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+  
+  Serial.println("\n\n========== FLASH MEMORY DUMP COMPLETE ==========");
+  Serial.printf("Total bytes read: %u (%.2f MB)\n", totalBytes, totalBytes / 1048576.0);
+  Serial.println("================================================\n");
+  
+  free(buffer);
+}
+
+/**
  * @brief Read specific address range from flash memory
  * @param startAddress Starting address to read
  * @param endAddress Ending address (inclusive)

@@ -52,6 +52,7 @@ void SerialBT_Commander::printMenu() {
     println("  read <addr>            - Read string from address (hex)");
     println("  readb <addr> <len>     - Read bytes (e.g., readb 1000 16)");
     println("  readrange <start> <end> - Read address range (hex)");
+    println("  readall                - Dump entire flash (4MB!)");
     println("");
     println("Erase Commands:");
     println("  erase <addr>           - Erase sector at address (hex)");
@@ -297,6 +298,9 @@ void SerialBT_Commander::processCommand(String cmd) {
     else if (command == "eraserange") {
         handleEraseRangeCommand(args);
     }
+    else if (command == "readall") {
+        handleReadAllCommand();
+    }
     else if (command == "eraseall") {
         handleEraseAllCommand();
     }
@@ -304,6 +308,50 @@ void SerialBT_Commander::processCommand(String cmd) {
         printf("[ERROR] Unknown command: %s\n", command.c_str());
         println("[INFO] Type 'help' for available commands");
     }
+}
+
+void SerialBT_Commander::handleReadAllCommand() {
+    println("[BT] Starting full flash dump (4MB)...");
+    println("[BT] This will take several minutes...\n");
+    
+    // Redirect output through Bluetooth
+    uint8_t buffer[256];
+    uint32_t totalBytes = 0;
+    const uint32_t FLASH_SIZE = 4194304;
+    
+    println("\n========== FLASH MEMORY DUMP START ==========");
+    printf("Total Size: %u bytes (4.00 MB)\n", FLASH_SIZE);
+    println("Format: [Address] Data (16 bytes per line)");
+    println("=============================================\n");
+    
+    for (uint32_t addr = 0; addr < FLASH_SIZE; addr += 256) {
+        if (!flashRead(addr, buffer, 256)) {
+            printf("[ERROR] Failed to read at 0x%08X\n", addr);
+            break;
+        }
+        
+        // Print in hex format
+        for (size_t i = 0; i < 256; i++) {
+            if ((addr + i) % 16 == 0) {
+                if (i > 0) println("");
+                printf("[%08X] ", addr + i);
+            }
+            printf("%02X ", buffer[i]);
+            totalBytes++;
+        }
+        
+        // Progress every 64KB
+        if ((addr % (64 * 1024)) == 0 && addr > 0) {
+            printf("\n[PROGRESS] %u%% - %u KB\n", 
+                  (addr * 100) / FLASH_SIZE, addr / 1024);
+        }
+        
+        delay(10); // Prevent watchdog and allow BT buffer to flush
+    }
+    
+    println("\n\n========== FLASH MEMORY DUMP COMPLETE ==========");
+    printf("Total bytes read: %u (4.00 MB)\n", totalBytes);
+    println("================================================\n");
 }
 
 void SerialBT_Commander::processCommands() {
