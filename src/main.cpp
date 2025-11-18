@@ -16,9 +16,6 @@ const uint32_t FLASH_SECTOR_SIZE = 4096;
 SPIFlash flash(SPI_FLASH_CS);
 
 // Task handles
-TaskHandle_t writeTaskHandle = NULL;
-TaskHandle_t readTaskHandle = NULL;
-TaskHandle_t eraseTaskHandle = NULL;
 TaskHandle_t monitorTaskHandle = NULL;
 TaskHandle_t bluetoothTaskHandle = NULL;
 TaskHandle_t autoWriteTaskHandle = NULL;
@@ -850,150 +847,11 @@ bool isAutoWriteEnabled() {
 // FREERTOS TASK FUNCTIONS
 //=============================================================================
 
-/**
- * @brief FreeRTOS Task: Write test data to flash memory
- */
-void writeTask(void *parameter) {
-  Serial.println("\n=== WRITE TASK STARTED ===");
-  
-  // Write string data
-  uint32_t addr1 = 0x0000;
-  flashEraseSector(addr1);
-  
-  String testString = "Hello Winbond W25Q32JVSSIQ!";
-  Serial.printf("[WRITE] Writing string at 0x%08X: %s\n", addr1, testString.c_str());
-  
-  if (flashWriteString(addr1, testString)) {
-    Serial.println("[WRITE] ✓ String write successful");
-  } else {
-    Serial.println("[WRITE] ✗ String write failed");
-  }
-  
-  // Write byte array
-  uint32_t addr2 = 0x1000;
-  flashEraseSector(addr2);
-  
-  uint8_t testData[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-  Serial.printf("[WRITE] Writing 16 bytes at 0x%08X\n", addr2);
-  
-  if (flashWrite(addr2, testData, 16)) {
-    Serial.println("[WRITE] ✓ Byte array write successful");
-  } else {
-    Serial.println("[WRITE] ✗ Byte array write failed");
-  }
-  
-  // Write large data block
-  uint32_t addr3 = 0x2000;
-  flashEraseSector(addr3);
-  
-  uint8_t largeData[256];
-  for (int i = 0; i < 256; i++) {
-    largeData[i] = i;
-  }
-  
-  Serial.printf("[WRITE] Writing 256 bytes at 0x%08X\n", addr3);
-  
-  if (flashWrite(addr3, largeData, 256)) {
-    Serial.println("[WRITE] ✓ Large block write successful");
-  } else {
-    Serial.println("[WRITE] ✗ Large block write failed");
-  }
-  
-  Serial.println("=== WRITE TASK COMPLETE ===\n");
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  
-  // Delete this task
-  vTaskDelete(NULL);
-}
 
-/**
- * @brief FreeRTOS Task: Read and verify data from flash memory
- */
-void readTask(void *parameter) {
-  Serial.println("\n=== READ TASK STARTED ===");
-  
-  vTaskDelay(pdMS_TO_TICKS(2000)); // Wait for write task to complete
-  
-  // Read string data
-  uint32_t addr1 = 0x0000;
-  String readString = "";
-  
-  Serial.printf("[READ] Reading string at 0x%08X\n", addr1);
-  
-  if (flashReadString(addr1, readString)) {
-    Serial.printf("[READ] Result: %s\n", readString.c_str());
-    Serial.println("[READ] ✓ String read successful");
-  } else {
-    Serial.println("[READ] ✗ String read failed");
-  }
-  
-  // Read byte array
-  uint32_t addr2 = 0x1000;
-  uint8_t readData[16];
-  
-  Serial.printf("[READ] Reading 16 bytes at 0x%08X\n", addr2);
-  
-  if (flashRead(addr2, readData, 16)) {
-    Serial.print("[READ] Result: ");
-    for (int i = 0; i < 16; i++) {
-      Serial.printf("%d ", readData[i]);
-    }
-    Serial.println();
-    Serial.println("[READ] ✓ Byte array read successful");
-  } else {
-    Serial.println("[READ] ✗ Byte array read failed");
-  }
-  
-  // Read specific range
-  uint32_t rangeStart = 0x2000;
-  uint32_t rangeEnd = 0x20FF;
-  uint8_t rangeData[256];
-  
-  if (flashReadRange(rangeStart, rangeEnd, rangeData)) {
-    Serial.println("[READ] ✓ Range read successful");
-    
-    // Verify first 10 bytes
-    Serial.print("[READ] First 10 bytes: ");
-    for (int i = 0; i < 10; i++) {
-      Serial.printf("%d ", rangeData[i]);
-    }
-    Serial.println();
-  } else {
-    Serial.println("[READ] ✗ Range read failed");
-  }
-  
-  Serial.println("=== READ TASK COMPLETE ===\n");
-  
-  // Delete this task
-  vTaskDelete(NULL);
-}
 
-/**
- * @brief FreeRTOS Task: Erase operations demonstration
- */
-void eraseTask(void *parameter) {
-  Serial.println("\n=== ERASE TASK STARTED ===");
-  
-  vTaskDelay(pdMS_TO_TICKS(5000)); // Wait for other tasks
-  
-  // Erase single sector
-  Serial.println("[ERASE] Demonstrating sector erase...");
-  flashEraseSector(0x5000);
-  
-  // Erase range of sectors
-  Serial.println("[ERASE] Demonstrating range erase...");
-  flashEraseRange(0x10000, 0x13FFF); // Erase 16KB (4 sectors)
-  
-  // Note: Full chip erase is commented out to prevent accidental data loss
-  // Uncomment if you want to test it
-  // Serial.println("[ERASE] Erasing entire chip...");
-  // flashEraseAll();
-  
-  Serial.println("=== ERASE TASK COMPLETE ===\n");
-  
-  // Delete this task
-  vTaskDelete(NULL);
-}
+
+
+
 
 /**
  * @brief FreeRTOS Task: Monitor system status
@@ -1113,45 +971,6 @@ void setup() {
   }
   
   Serial.println("\n=== Creating FreeRTOS Tasks ===");
-  
-  // Comment out demo tasks - uncomment if you want to run the demos
-  /*
-  // Create write task
-  xTaskCreatePinnedToCore(
-    writeTask,            // Task function
-    "WriteTask",          // Task name
-    4096,                 // Stack size (bytes)
-    NULL,                 // Parameter
-    2,                    // Priority
-    &writeTaskHandle,     // Task handle
-    1                     // Core 1
-  );
-  Serial.println("✓ Write Task created (Core 1, Priority 2)");
-  
-  // Create read task
-  xTaskCreatePinnedToCore(
-    readTask,             // Task function
-    "ReadTask",           // Task name
-    4096,                 // Stack size (bytes)
-    NULL,                 // Parameter
-    2,                    // Priority
-    &readTaskHandle,      // Task handle
-    1                     // Core 1
-  );
-  Serial.println("✓ Read Task created (Core 1, Priority 2)");
-  
-  // Create erase task
-  xTaskCreatePinnedToCore(
-    eraseTask,            // Task function
-    "EraseTask",          // Task name
-    3072,                 // Stack size (bytes)
-    NULL,                 // Parameter
-    1,                    // Priority
-    &eraseTaskHandle,     // Task handle
-    1                     // Core 1
-  );
-  Serial.println("✓ Erase Task created (Core 1, Priority 1)");
-  */
   
   // Create Bluetooth command task
   xTaskCreatePinnedToCore(
