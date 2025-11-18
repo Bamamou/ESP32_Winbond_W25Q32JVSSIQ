@@ -69,7 +69,7 @@ void SerialBT_Commander::printMenu() {
     println("  ringreset              - Reset ring buffer to 0x00000000");
     println("");
     println("Auto-Write Commands:");
-    println("  autostart              - Start auto-writing random numbers");
+    println("  autostart              - Start auto-writing vehicle data");
     println("  autostop               - Stop auto-writing");
     println("");
     println("Info Commands:");
@@ -541,7 +541,8 @@ void SerialBT_Commander::handleAutoStartCommand() {
     } else {
         startAutoWrite();
         println("[BT] ✓ Auto-write started");
-        println("[BT] Writing random numbers (0-1000) every second");
+        println("[BT] Logging vehicle data every second");
+        println("[BT] Data includes: speed, voltage, current, temp, etc.");
         println("[BT] Use 'autostop' to stop");
     }
 }

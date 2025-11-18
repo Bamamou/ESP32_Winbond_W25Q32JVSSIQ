@@ -26,7 +26,8 @@ A comprehensive FreeRTOS-based firmware for ESP32 to control Winbond W25Q32JVSSI
 
 - **Bluetooth Serial Control**: Full wireless control via Bluetooth Serial interface
 - **Ring Buffer Management**: Circular buffer system with automatic sector erasing and wrapping
-- **Auto-Write System**: Automated random data generation with timestamps
+- **Vehicle Data Logging**: Automated telemetry logging with 30+ parameters per second
+- **Simulated Telemetry**: Realistic vehicle data generation for testing and development
 - **Read/Write/Erase Operations**: Complete flash memory management
 - **FreeRTOS Architecture**: Multi-task design with thread-safe SPI access
 - **Full Flash Dump**: Read entire 4MB flash memory with stop capability
@@ -446,44 +447,54 @@ ringreset
 Automatically generate and write random data to flash memory.
 
 #### `autostart`
-Start automatic data generation.
+Start automatic vehicle data logging.
 
 **Example:**
 ```
 ringinit        # Initialize first
-autostart       # Start auto-writing
+autostart       # Start auto-logging
 ```
 
 **Output:**
 ```
 [BT] ✓ Auto-write started
-[BT] Writing random numbers (0-1000) every second
+[BT] Logging vehicle data every second
+[BT] Data includes: speed, voltage, current, temp, etc.
 [BT] Use 'autostop' to stop
 ```
 
 **Serial Monitor Output:**
 ```
-[AUTO] #1: Wrote 742 at 0x00000000 (time: 12345 ms)
-[AUTO] #2: Wrote 156 at 0x00000006 (time: 13345 ms)
-[AUTO] #3: Wrote 889 at 0x0000000C (time: 14345 ms)
+[AUTO] #1: Logged vehicle data at 0x00000000 (Speed: 45.2 km/h, SOC: 78%)
+[AUTO] #2: Logged vehicle data at 0x00000100 (Speed: 52.8 km/h, SOC: 77%)
+[AUTO] #3: Logged vehicle data at 0x00000200 (Speed: 48.5 km/h, SOC: 76%)
 ...
 ```
 
 **What it does:**
-- Generates random number (0-1000) every second
-- Writes 6 bytes per entry (4-byte timestamp + 2-byte value)
+- Generates simulated vehicle telemetry data every second
+- Writes 256 bytes per entry (30+ parameters)
+- Includes: speed, voltages, currents, temperatures, RPM, SOC, switches
 - Automatically handles sector erasing and wrapping
 - Runs in background FreeRTOS task on Core 1
+
+**Data logged:**
+- Vehicle: Odometer, trip, speed, reverse mode, riding mode
+- MCU: Bus current, throttle, controller temp, motor temp
+- BMS: Current, voltage, SOC, cell voltages
+- System: RPM, supply voltage, charger status, errors
+- Inputs: 8 switches (lights, turns, brake, etc.)
 
 **Notes:**
 - Requires `ringinit` first
 - Pauses automatically during read operations
 - Continues until stopped or power loss
+- Each entry is padded to exactly 256 bytes
 
 ---
 
 #### `autostop`
-Stop automatic data generation.
+Stop automatic vehicle data logging.
 
 **Example:**
 ```
@@ -496,8 +507,9 @@ autostop
 ```
 
 **Notes:**
-- Does not delete written data
+- Does not delete logged data
 - Can restart with `autostart` at any time
+- Current ring buffer position is preserved
 
 ---
 
@@ -603,10 +615,12 @@ After wrapping:
 
 ### Use Cases
 
-- **Data Logging**: Continuous sensor data logging
-- **Event Recording**: System events with timestamps
-- **Circular Buffers**: FIFO-style data storage
-- **Wear Leveling**: Distribute writes across flash
+- **Vehicle Data Logging**: Record complete telemetry for electric vehicles/scooters
+- **Performance Testing**: Log speed, power consumption, efficiency metrics
+- **Battery Analysis**: Track voltage, current, SOC over time
+- **Diagnostics**: Capture error codes and system status
+- **Circular Buffers**: FIFO-style continuous data recording
+- **Wear Leveling**: Distribute writes across flash memory
 
 ### Important Notes
 
@@ -619,40 +633,127 @@ After wrapping:
 
 ## 🤖 Auto-Write Feature
 
+### What It Does
+
+The auto-write feature automatically logs complete vehicle telemetry data to flash memory:
+
+- **Data Collection**: Captures 30+ vehicle parameters every second
+- **Automatic Logging**: Runs continuously in background FreeRTOS task
+- **Ring Buffer**: Automatically wraps around when flash is full
+- **Realistic Simulation**: Generates realistic vehicle data for testing
+
+### Logged Vehicle Data
+
+Each log entry captures comprehensive vehicle telemetry:
+
+**Vehicle Information:**
+- Odometer (km)
+- Trip distance (km)
+- Speed (km/h)
+- Reverse mode status
+- Riding mode (Eco/Normal/Sport/Custom)
+
+**Motor Controller Data:**
+- Bus current (A)
+- Throttle position (%)
+- Controller temperature (°C)
+- Motor temperature (°C)
+
+**Battery Management System:**
+- Battery current (A) - charging/discharging
+- Pack voltage (V)
+- State of Charge (%)
+- Highest cell voltage (V)
+- Lowest cell voltage (V)
+
+**Additional Metrics:**
+- Motor RPM
+- Board supply voltage (V)
+- Charger voltage (V)
+- Charger current (A)
+- Active error count
+- Status bytes
+
+**Input Switches:**
+- Headlight high beam
+- Turn signals (left/right)
+- Mode button
+- Kickstand
+- Killswitch
+- Ignition key
+- Brake switch
+
 ### Data Format
 
-Each auto-write entry is **6 bytes**:
+Each log entry is **256 bytes**, semicolon-separated format:
 
-| Bytes | Content | Format |
-|-------|---------|--------|
-| 0-3   | Timestamp | uint32_t (little-endian) |
-| 4-5   | Random Number | uint16_t (little-endian) |
-
-**Example Entry:**
 ```
-Hex: 39 30 00 00 E6 02
-Timestamp: 0x00003039 = 12345 ms
-Value: 0x02E6 = 742
+;12.5;0.8;45.2;0;2;75.3;-12.5;128;64;85;45.6;67.8;52.4;3.95;3.87;78;2500;12.3;0.0;0.0;0;0;1;0;0;0;0;0;0;1;...
 ```
 
-### Parsing Auto-Write Data
+**Field Order:**
+1. Odometer | 2. Trip | 3. Speed | 4. Reverse | 5. Riding Mode | 6. Bus Current | 7. Battery Current | 8-9. Status Bytes | 10. Throttle | 11. Controller Temp | 12. Motor Temp | 13. Voltage | 14. Max Cell V | 15. Min Cell V | 16. SOC | 17. RPM | 18. Board V | 19. Charger V | 20. Charger Current | 21-22. Errors | 23-30. Switches
 
-To read auto-write data:
+### Simulated Data Ranges
 
-```python
-# Python example
-timestamp = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24)
-value = data[4] | (data[5] << 8)
-print(f"Time: {timestamp} ms, Value: {value}")
-```
+For testing purposes, the system generates realistic random data:
+
+| Parameter | Range | Notes |
+|-----------|-------|-------|
+| Speed | 0-100 km/h | Random per second |
+| Bus Current | 0-150 A | Realistic motor load |
+| Battery Current | -50 to 150 A | Negative = charging |
+| Pack Voltage | 48-58 V | Typical EV voltage |
+| SOC | 10-100% | Battery charge level |
+| Controller Temp | 20-80°C | Operating temperature |
+| Motor Temp | 25-90°C | Operating temperature |
+| RPM | 0-5000 | Motor speed |
+| Cell Voltage | 3.4-4.2 V | Per cell range |
+| Throttle | 0-100% | Throttle position |
 
 ### Performance
 
-- **Write Rate**: 1 entry per second (6 bytes/sec)
+- **Write Rate**: 1 entry per second (256 bytes/sec)
 - **Flash Capacity**: 4,194,304 bytes
-- **Max Entries**: ~699,050 entries
-- **Full Time**: ~8 days to fill entire flash
+- **Max Entries**: ~16,368 entries
+- **Full Time**: ~4.5 hours to fill entire flash
 - **Continuous**: Wraps and continues indefinitely
+
+### Usage Example
+
+```bash
+# Connect via Bluetooth
+# Initialize ring buffer
+ringinit
+
+# Start logging
+autostart
+
+# Monitor via Serial:
+[AUTO] #1: Logged vehicle data at 0x00000000 (Speed: 45.2 km/h, SOC: 78%)
+[AUTO] #2: Logged vehicle data at 0x00000100 (Speed: 52.8 km/h, SOC: 77%)
+[AUTO] #3: Logged vehicle data at 0x00000200 (Speed: 48.5 km/h, SOC: 76%)
+
+# Stop when needed
+autostop
+
+# Read logged data
+readall
+```
+
+### Parsing Logged Data
+
+To parse the CSV-like format:
+
+```python
+# Python example
+data = ";12.5;0.8;45.2;0;2;75.3;-12.5;..."
+fields = data.split(';')[1:]  # Skip first empty field
+odometer = float(fields[0])
+trip = float(fields[1])
+speed = float(fields[2])
+# ... etc
+```
 
 ---
 
@@ -664,7 +765,7 @@ print(f"Time: {timestamp} ms, Value: {value}")
 - **Total Size**: 4MB (4,194,304 bytes)
 - **Sector Size**: 4KB (4,096 bytes)
 - **Total Sectors**: 1,024
-- **Page Size**: 256 bytes
+- **Page Size**: 256 bytes (matches data log size)
 - **Max Pages**: 16,384
 
 ### Address Range
@@ -683,7 +784,7 @@ print(f"Time: {timestamp} ms, Value: {value}")
 |------|------|----------|-------|---------|
 | bluetoothTask | 0 | 1 | 4096 | Bluetooth command processing |
 | monitorTask | 0 | 1 | 2048 | System monitoring (every 10s) |
-| autoWriteTask | 1 | 1 | 4096 | Auto data generation |
+| autoWriteTask | 1 | 1 | 4096 | Vehicle data generation & logging |
 
 **Synchronization:**
 - Mutex-protected SPI access
@@ -692,8 +793,17 @@ print(f"Time: {timestamp} ms, Value: {value}")
 
 ### Memory Usage
 
-- **Flash**: 86.5% (1,133,769 / 1,310,720 bytes)
-- **RAM**: 12.3% (40,264 / 327,680 bytes)
+- **Flash**: 86.7% (1,136,257 / 1,310,720 bytes)
+- **RAM**: 12.3% (40,368 / 327,680 bytes)
+
+### Data Structures
+
+**Vehicle Telemetry:**
+- vehicleInfo: Speed, odometer, trip, mode
+- MCUData: Current, throttle, temperatures
+- BMSData: Voltage, current, SOC
+- infoToSave: Cell voltages, RPM, supply voltages, errors
+- inputs: 8 digital switches
 
 ### Libraries
 
@@ -750,8 +860,21 @@ print(f"Time: {timestamp} ms, Value: {value}")
 **Solutions:**
 1. Run `ringinit` before `autostart`
 2. Check `ringstatus` for "Auto-write: ENABLED"
-3. Monitor serial output for "[AUTO]" messages
+3. Monitor serial output for "[AUTO]" messages showing vehicle data logs
 4. Stop and restart: `autostop` then `autostart`
+5. Verify 256-byte entries are being written
+
+---
+
+### Large Data Entries
+
+**Problem**: Logs seem to take up more space than expected
+
+**Solutions:**
+- Each vehicle data log is exactly 256 bytes (padded with dots)
+- Flash capacity: 4,194,304 bytes ÷ 256 bytes/entry = ~16,368 entries
+- At 1 entry/second, flash fills in ~4.5 hours
+- Ring buffer automatically wraps and overwrites oldest data
 
 ---
 
@@ -806,16 +929,22 @@ erase 0
 # Initialize ring buffer
 ringinit
 
-# Start automatic logging
+# Start automatic vehicle data logging
 autostart
 
+# System logs 30+ parameters every second:
+# - Speed, odometer, trip distance
+# - Battery voltage, current, SOC
+# - Motor/controller temperatures
+# - RPM, throttle position
+# - All switch states
 # Check status periodically
 ringstatus
 
 # Stop when needed
 autostop
 
-# Dump all data
+# Dump all logged data
 readall
 ```
 

@@ -36,6 +36,135 @@ bool autoWriteEnabled = false;
 SerialBT_Commander* btCommander = nullptr;
 
 //=============================================================================
+// DATA STRUCTURES FOR VEHICLE LOGGING
+//=============================================================================
+
+#define MAXPAGESIZE 256  // Maximum data log size
+
+// Vehicle Info Structure
+struct {
+  float odometerKm;
+  float tripKm;
+  float speedKmh;
+  bool isInReverseMode;
+  uint8_t ridingMode;
+} vehicleInfo;
+
+// MCU Data Structure
+struct {
+  float busCurrent;
+  uint8_t throttle;
+  float controllerTemperature;
+  float motorTemperature;
+} MCUData;
+
+// BMS Data Structure
+struct {
+  float current;
+  float voltage;
+  uint8_t SOC;
+} BMSData;
+
+// Info to Save Structure
+struct {
+  float odometerKm;
+  float tripKm;
+  float speedKmh;
+  uint8_t vehicleStatuByte1;
+  uint8_t vehicleStatuByte2;
+  float BMSCellHighestVoltageValue;
+  float BMSCellLowestVoltageValue;
+  uint16_t rpm;
+  float boardSupplyVoltage;
+  float chargerVoltage;
+  float chargerCurrent;
+  uint8_t numActiveErrors;
+  uint16_t sumActiveErrors;
+} infoToSave;
+
+// Input Switches Structure
+struct {
+  bool headlightHighBeam;
+  bool turnLeftSwitch;
+  bool turnRightSwitch;
+  bool modeButton;
+  bool kickstand;
+  bool killswitch;
+  bool key;
+  bool breakSwitch;
+} inputs;
+
+/**
+ * @brief Generate simulated vehicle data for logging
+ * Updates all vehicle data structures with random/simulated values
+ */
+void generateSimulatedData() {
+  // Generate realistic vehicle data
+  static float odometer = 0.0;
+  static float trip = 0.0;
+  
+  // Speed varies between 0-100 km/h
+  float speed = random(0, 10000) / 100.0;
+  vehicleInfo.speedKmh = speed;
+  infoToSave.speedKmh = speed;
+  
+  // Update odometer and trip (increment based on speed)
+  odometer += speed / 3600.0;  // km per second
+  trip += speed / 3600.0;
+  vehicleInfo.odometerKm = odometer;
+  vehicleInfo.tripKm = trip;
+  infoToSave.odometerKm = odometer;
+  infoToSave.tripKm = trip;
+  
+  // Reverse mode (10% chance)
+  vehicleInfo.isInReverseMode = (random(0, 10) == 0);
+  
+  // Riding mode (0-3: Eco, Normal, Sport, Custom)
+  vehicleInfo.ridingMode = random(0, 4);
+  
+  // MCU Data
+  MCUData.busCurrent = random(0, 15000) / 100.0;  // 0-150A
+  MCUData.throttle = random(0, 101);  // 0-100%
+  MCUData.controllerTemperature = random(2000, 8000) / 100.0;  // 20-80°C
+  MCUData.motorTemperature = random(2500, 9000) / 100.0;  // 25-90°C
+  
+  // BMS Data
+  BMSData.current = random(-5000, 15000) / 100.0;  // -50A to 150A
+  BMSData.voltage = random(4800, 5800) / 100.0;  // 48-58V
+  BMSData.SOC = random(10, 101);  // 10-100%
+  
+  // Cell voltages
+  infoToSave.BMSCellHighestVoltageValue = random(360, 420) / 100.0;  // 3.6-4.2V
+  infoToSave.BMSCellLowestVoltageValue = random(340, 400) / 100.0;  // 3.4-4.0V
+  
+  // RPM
+  infoToSave.rpm = random(0, 5000);  // 0-5000 RPM
+  
+  // Voltages
+  infoToSave.boardSupplyVoltage = random(1150, 1350) / 100.0;  // 11.5-13.5V
+  infoToSave.chargerVoltage = random(0, 6000) / 100.0;  // 0-60V
+  infoToSave.chargerCurrent = random(0, 1000) / 100.0;  // 0-10A
+  
+  // Status bytes (random bits)
+  infoToSave.vehicleStatuByte1 = random(0, 256);
+  infoToSave.vehicleStatuByte2 = random(0, 256);
+  
+  // Errors
+  infoToSave.numActiveErrors = random(0, 5);
+  infoToSave.sumActiveErrors = random(0, 100);
+  
+  // Input switches (random boolean states)
+  inputs.headlightHighBeam = random(0, 2);
+  inputs.turnLeftSwitch = random(0, 2);
+  inputs.turnRightSwitch = random(0, 2);
+  inputs.modeButton = random(0, 2);
+  inputs.kickstand = random(0, 2);
+  inputs.killswitch = random(0, 2);
+  inputs.key = random(0, 2);
+  inputs.breakSwitch = random(0, 2);
+}
+
+//=============================================================================
 // FLASH MEMORY UTILITY FUNCTIONS
 //=============================================================================
 
@@ -562,8 +691,8 @@ bool flashRingBufferIsPaused() {
 //=============================================================================
 
 /**
- * @brief Task that automatically writes random numbers to ring buffer
- * Writes one random number (0-1000) every second
+ * @brief Task that automatically writes vehicle data to ring buffer
+ * Writes complete vehicle data log every second
  * Automatically handles ring buffer wrapping
  */
 void autoWriteTask(void* parameter) {
@@ -580,29 +709,85 @@ void autoWriteTask(void* parameter) {
   
   while (true) {
     if (autoWriteEnabled && !ringBufferPaused) {
-      // Generate random number between 0 and 1000
-      uint16_t randomNum = random(0, 1001);
+      // Generate simulated vehicle data
+      generateSimulatedData();
       
-      // Create data packet: timestamp (4 bytes) + random number (2 bytes)
-      uint8_t data[6];
-      uint32_t timestamp = millis();
+      // Prepare the dataset
+      String datalog = ";";
+      datalog.concat(infoToSave.odometerKm);
+      datalog.concat(";");
+      datalog.concat(infoToSave.tripKm);
+      datalog.concat(";");
+      datalog.concat(infoToSave.speedKmh);
+      datalog.concat(";");
+      datalog.concat(vehicleInfo.isInReverseMode);
+      datalog.concat(";");
+      datalog.concat(vehicleInfo.ridingMode);
+      datalog.concat(";");
+      datalog.concat(MCUData.busCurrent);
+      datalog.concat(";");
+      datalog.concat(BMSData.current);
+      datalog.concat(";");
+      datalog.concat(infoToSave.vehicleStatuByte1);
+      datalog.concat(";");
+      datalog.concat(infoToSave.vehicleStatuByte2);
+      datalog.concat(";");
+      datalog.concat(MCUData.throttle);
+      datalog.concat(";");
+      datalog.concat(MCUData.controllerTemperature);
+      datalog.concat(";");
+      datalog.concat(MCUData.motorTemperature);
+      datalog.concat(";");
+      datalog.concat(BMSData.voltage);
+      datalog.concat(";");
+      datalog.concat(infoToSave.BMSCellHighestVoltageValue);
+      datalog.concat(";");
+      datalog.concat(infoToSave.BMSCellLowestVoltageValue);
+      datalog.concat(";");
+      datalog.concat(BMSData.SOC);
+      datalog.concat(";");
+      datalog.concat(infoToSave.rpm);
+      datalog.concat(";");
+      datalog.concat(infoToSave.boardSupplyVoltage);
+      datalog.concat(";");
+      datalog.concat(infoToSave.chargerVoltage);
+      datalog.concat(";");
+      datalog.concat(infoToSave.chargerCurrent);
+      datalog.concat(";");
+      datalog.concat(infoToSave.numActiveErrors);
+      datalog.concat(";");
+      datalog.concat(infoToSave.sumActiveErrors);
+      datalog.concat(";");
+      datalog.concat(inputs.headlightHighBeam);
+      datalog.concat(";");
+      datalog.concat(inputs.turnLeftSwitch);
+      datalog.concat(";");
+      datalog.concat(inputs.turnRightSwitch);
+      datalog.concat(";");
+      datalog.concat(inputs.modeButton);
+      datalog.concat(";");
+      datalog.concat(inputs.kickstand);
+      datalog.concat(";");
+      datalog.concat(inputs.killswitch);
+      datalog.concat(";");
+      datalog.concat(inputs.key);
+      datalog.concat(";");
+      datalog.concat(inputs.breakSwitch);
+      datalog.concat(";");
       
-      // Pack timestamp (little-endian)
-      data[0] = (timestamp >> 0) & 0xFF;
-      data[1] = (timestamp >> 8) & 0xFF;
-      data[2] = (timestamp >> 16) & 0xFF;
-      data[3] = (timestamp >> 24) & 0xFF;
-      
-      // Pack random number (little-endian)
-      data[4] = (randomNum >> 0) & 0xFF;
-      data[5] = (randomNum >> 8) & 0xFF;
+      // Pad to MAXPAGESIZE with dots
+      for(int i = datalog.length(); i < MAXPAGESIZE-1; i++){
+        datalog.concat(".");
+      }
       
       // Write to ring buffer
-      if (flashRingBufferWrite(data, 6)) {
+      if (flashRingBufferWriteString(datalog)) {
         writeCount++;
-        Serial.printf("[AUTO] #%u: Wrote %u at 0x%08X (time: %u ms)\n", 
-                      writeCount, randomNum, 
-                      flashRingBufferGetPosition() - 6, timestamp);
+        Serial.printf("[AUTO] #%u: Logged vehicle data at 0x%08X (Speed: %.1f km/h, SOC: %d%%)\n", 
+                      writeCount, 
+                      flashRingBufferGetPosition() - datalog.length(), 
+                      vehicleInfo.speedKmh,
+                      BMSData.SOC);
       } else {
         Serial.println("[AUTO] Write failed!");
       }
